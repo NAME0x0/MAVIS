@@ -63,7 +63,7 @@ The core vision is to create a highly productive environment for power users and
 
 MAVIS operates as a single, full-screen process that takes over rendering and primary interaction after `winlogon` initializes the shell.
 
-```markdown
+```plaintext
 +-------------------------------------------------------------------+
 |                       MAVIS Process (Rust)                        |
 | +---------------------------------------------------------------+ |
