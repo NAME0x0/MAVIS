@@ -376,6 +376,7 @@ cargo build --release
 ```
 
 ### 10.3 Initial Configuration
+
 - On first launch (as a regular app or as the shell), default configuration files will be created in `%LOCALAPPDATA%\MAVIS\`.
 - You can start customizing by editing files like `init.lua` and `keybindings.lua` in `%LOCALAPPDATA%\MAVIS\config\`.
 
