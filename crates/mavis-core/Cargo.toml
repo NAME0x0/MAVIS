@@ -1,0 +1,41 @@
+[package]
+name = "mavis-core"
+version = "0.1.0-alpha"
+edition = "2025"
+authors = ["MAVIS Contributors"]
+description = "Core functionality for the MAVIS shell environment"
+license = "MIT"
+
+[dependencies]
+# Windows API integration
+windows = { version = "0.52.0", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Performance",
+    "Win32_System_Console",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Error handling
+thiserror = "1.0.58"
+anyhow = "1.0.80"
+
+# Logging
+log = "0.4.21"
+
+# Scripting
+mlua = { version = "0.9.5", features = ["lua54", "vendored", "serialize"] }
+
+# Serialization
+serde = { version = "1.0.196", features = ["derive"] }
+serde_json = "1.0.114"
+
+# Async support
+tokio = { version = "1.36.0", features = ["full"] }
+
+# File system monitoring
+notify = "6.1.1"
+
+# Performance monitoring
+once_cell = "1.19.0"

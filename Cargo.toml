@@ -1,0 +1,61 @@
+[workspace]
+members = [
+    "crates/mavis-core",
+    "crates/mavis-gui",
+    "crates/mavis-shell",
+    "bin"
+]
+resolver = "2"
+
+[package]
+name = "mavis"
+version = "0.1.0-alpha"
+edition = "2025"
+authors = ["MAVIS Contributors"]
+description = "Modular AVIS - Advanced Windows Shell Environment"
+repository = "https://github.com/NAME0x0/MAVIS"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+# Core crate dependencies
+mavis-core = { path = "crates/mavis-core" }
+mavis-gui = { path = "crates/mavis-gui" }
+mavis-shell = { path = "crates/mavis-shell" }
+
+# Core libraries
+windows = { version = "0.52.0", features = [
+    "Win32_Foundation", 
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Direct2D",
+    "Win32_System_Console",
+    "Win32_System_Performance",
+    "Win32_UI_Shell",
+    "Win32_System_Registry",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+] }
+log = "0.4.21"
+env_logger = "0.11.2"
+thiserror = "1.0.58"
+anyhow = "1.0.80"
+mlua = { version = "0.9.5", features = ["lua54", "vendored", "serialize"] }
+
+[build-dependencies]
+embed-resource = "2.4.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[features]
+default = ["direct2d"]
+direct2d = []
+gdi_fallback = []

@@ -1,0 +1,47 @@
+[package]
+name = "mavis-gui"
+version = "0.1.0-alpha"
+edition = "2025"
+authors = ["MAVIS Contributors"]
+description = "GUI framework for the MAVIS shell environment using Dear ImGui"
+license = "MIT"
+
+[dependencies]
+# Core dependency
+mavis-core = { path = "../mavis-core" }
+
+# Windows API integration
+windows = { version = "0.52.0", features = [
+    "Win32_Foundation", 
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Gdi",
+] }
+
+# ImGui related
+imgui = "0.11.0"
+imgui-winit-support = "0.11.0"
+imgui-dx11-renderer = "0.11.0"
+
+# Window creation
+winit = "0.28.7"
+
+# Error handling
+thiserror = "1.0.58"
+anyhow = "1.0.80"
+
+# Logging
+log = "0.4.21"
+
+# Image rendering
+stb_image = "0.2.5"
+
+# Font handling
+font-kit = "0.11.0"
+
+[features]
+default = ["direct2d"]
+direct2d = []
+gdi_fallback = []

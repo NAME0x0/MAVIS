@@ -187,11 +187,9 @@ mavis/                              # <root of workspace>
 ├── crates/                         # Internal workspace crates
 │   ├── mavis-core/                 # core logic
 │   ├── mavis-gui/                  # GUI/frontend
-│   └── mavis-shell/                # shell‑replacement integration
+│   └── mavis-shell/                # shell‑replacement integration & main binary
 ├── examples/                       # Self‑contained demos and usage samples
 │   └── example_widget.lua
-├── src/                            # Source for the main MAVIS binary
-│   └── main.rs
 ├── bin/                            # Source for additional binaries (e.g., installer tool)
 │   └── installer.rs                # Example: source for an installer tool
 ├── benches/                        # benchmarks (criterion or built‑in)
@@ -200,7 +198,7 @@ mavis/                              # <root of workspace>
 │   └── shell_integration.rs
 ├── tools/                          # small internal tools (e.g., linting, codegen)
 │   └── tidy-config.rs
-├── Cargo.toml                      # workspace manifest (members: crates/*, ., bin/*)
+├── Cargo.toml                      # workspace manifest (members: crates/*, bin/*)
 ├── Cargo.lock
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
@@ -338,9 +336,9 @@ mavis/                              # <root of workspace>
 
 ### 10.1 Installation
 
-1.  **Download:** Obtain the latest MAVIS release `.zip` or installer (`.msi` - TBD) from the [Releases page](...) (Link TBD).
-2.  **Extract/Install:** Extract the archive to a permanent location (e.g., `C:\Program Files\MAVIS`) or run the installer.
-3.  **Configuration (Choose ONE method):**
+1.  **Download:** Obtain the latest MAVIS release `.zip` or, when available, the `.msi` installer from the [Releases page](...) (Link TBD). The `.msi` installer is the planned deployment target and will handle setup automatically.
+2.  **Extract/Install (Manual - for `.zip`):** Extract the archive to a permanent location (e.g., `C:\Program Files\MAVIS`).
+3.  **Configuration (Manual - Choose ONE method):**
     * **Method A: Shell Launcher v2 (Recommended - Requires Win Ent/Edu/IoT):**
         * Requires configuration via `PowerShell` (WMI) or `Provisioning Packages` (.ppkg).
         * Refer to specific documentation provided with MAVIS and Microsoft's Shell Launcher docs. This method needs setup *before* logging in as the target user.
