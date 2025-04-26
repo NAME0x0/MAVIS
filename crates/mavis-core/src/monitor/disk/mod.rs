@@ -1,4 +1,3 @@
-// filepath: c:\Users\dell\OneDrive\Desktop\GIT\MAVIS\crates\mavis-core\src\monitor\disk\mod.rs
 // Disk monitoring for Windows systems
 
 use crate::error::CoreError;
@@ -221,7 +220,7 @@ impl DiskMonitor {
             // ... (code for getting free_space via PDH removed) ...
             // let free_space = ...;
             
-            // Get total disk space info using GetDiskFreeSpaceW
+            // Get disk space info using GetDiskFreeSpaceW
             let disk_space_info = Self::get_disk_space().unwrap_or_default();
             let free_bytes = if !disk_space_info.is_empty() {
                 disk_space_info.iter().map(|(_, _, free, _)| free).sum()
@@ -257,7 +256,7 @@ impl DiskMonitor {
         let mut result = Vec::new();
         
         // Get available drive letters (A-Z)
-        let mut available_drives = unsafe {
+        let available_drives = unsafe {
             windows::Win32::Storage::FileSystem::GetLogicalDrives()
         };
         
@@ -279,14 +278,14 @@ impl DiskMonitor {
                 let success = unsafe {
                     windows::Win32::Storage::FileSystem::GetDiskFreeSpaceW(
                         windows::core::PCWSTR(drive_path_wide.as_ptr()),
-                        &mut sectors_per_cluster,
-                        &mut bytes_per_sector,
-                        &mut number_of_free_clusters,
-                        &mut total_number_of_clusters,
+                        Some(&mut sectors_per_cluster),
+                        Some(&mut bytes_per_sector),
+                        Some(&mut number_of_free_clusters),
+                        Some(&mut total_number_of_clusters),
                     )
                 };
                 
-                if success.as_bool() {
+                if success.is_ok() {
                     // Calculate total and free space
                     let bytes_per_cluster = sectors_per_cluster as u64 * bytes_per_sector as u64;
                     let total_bytes = total_number_of_clusters as u64 * bytes_per_cluster;

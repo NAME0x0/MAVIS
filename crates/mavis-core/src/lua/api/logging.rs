@@ -12,50 +12,50 @@ pub fn register_logging_functions(lua: &Lua, table: &Table) -> Result<(), CoreEr
         trace!("[Lua] {}", message);
         Ok(())
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create trace function: {}", e)))?;
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create trace function: {}", e))))?; // Wrap error
     
     table.set("trace", trace_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set trace function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set trace function: {}", e))))?; // Wrap error
     
     // Register debug function
     let debug_fn = lua.create_function(|_, message: String| {
         debug!("[Lua] {}", message);
         Ok(())
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create debug function: {}", e)))?;
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create debug function: {}", e))))?; // Wrap error
     
     table.set("debug", debug_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set debug function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set debug function: {}", e))))?; // Wrap error
     
     // Register info function
     let info_fn = lua.create_function(|_, message: String| {
         info!("[Lua] {}", message);
         Ok(())
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create info function: {}", e)))?;
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create info function: {}", e))))?; // Wrap error
     
     table.set("info", info_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set info function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set info function: {}", e))))?; // Wrap error
     
     // Register warn function
     let warn_fn = lua.create_function(|_, message: String| {
         warn!("[Lua] {}", message);
         Ok(())
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create warn function: {}", e)))?;
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create warn function: {}", e))))?; // Wrap error
     
     table.set("warn", warn_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set warn function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set warn function: {}", e))))?; // Wrap error
     
     // Register error function
     let error_fn = lua.create_function(|_, message: String| {
         error!("[Lua] {}", message);
         Ok(())
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create error function: {}", e)))?;
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create error function: {}", e))))?; // Wrap error
     
     table.set("error", error_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set error function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set error function: {}", e))))?; // Wrap error
     
     // Register formatted_log function that accepts a level and a message
     let formatted_log_fn = lua.create_function(|_, (level, message): (String, String)| {
@@ -69,10 +69,10 @@ pub fn register_logging_functions(lua: &Lua, table: &Table) -> Result<(), CoreEr
         }
         Ok(())
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create formatted_log function: {}", e)))?;
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create formatted_log function: {}", e))))?; // Wrap error
     
     table.set("log", formatted_log_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set formatted_log function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set formatted_log function: {}", e))))?; // Wrap error
     
     info!("Logging API functions registered successfully");
     Ok(())
@@ -81,13 +81,12 @@ pub fn register_logging_functions(lua: &Lua, table: &Table) -> Result<(), CoreEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mlua::{Lua, Value};
+    use mlua::Lua;
     
     #[test]
     fn test_register_logging_functions() {
         let lua = Lua::new();
         let globals = lua.globals();
-        let mavis_table = lua.create_table().unwrap();
         let log_table = lua.create_table().unwrap();
         
         register_logging_functions(&lua, &log_table).unwrap();

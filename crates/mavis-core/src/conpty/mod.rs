@@ -1,28 +1,27 @@
 //! Manages Windows Pseudo Console (ConPTY) sessions.
 
-use crate::error::CoreResult;
-use anyhow::{bail, Context};
+use crate::error::{CoreResult, CoreError};
 use log::{debug, error, info};
 use std::{
-    ffi::OsString,
     io::{Read, Write},
-    mem::{size_of, zeroed},
-    os::windows::prelude::{AsRawHandle, FromRawHandle, OwnedHandle},
-    ptr::null_mut,
-    thread::{self, JoinHandle},
+    mem::zeroed,
+    os::windows::prelude::{AsRawHandle, FromRawHandle, OwnedHandle, IntoRawHandle},
+    ffi::c_void, 
+    fs::File,
 };
 use windows::{
     core::{PCWSTR, PWSTR},
     Win32::{
-        Foundation::{CloseHandle, HANDLE, HPCON, INVALID_HANDLE_VALUE, TRUE},
+        Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE},
         System::{
-            Console::{CreatePseudoConsole, GetConsoleScreenBufferInfo, ResizePseudoConsole},
+            Console::{
+                CreatePseudoConsole, ResizePseudoConsole, HPCON, COORD,
+            },
             Pipes::{CreatePipe, PeekNamedPipe},
             Threading::{
-                CreateProcessW, InitializeProcThreadAttributeList, UpdateProcThreadAttribute,
-                DeleteProcThreadAttributeList, GetExitCodeProcess, TerminateProcess,
-                PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_LIST, STARTUPINFOEXW,
-                EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES, STARTUPINFOW,
+                CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess, InitializeProcThreadAttributeList,
+                TerminateProcess, UpdateProcThreadAttribute, EXTENDED_STARTUPINFO_PRESENT,
+                LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, STARTUPINFOEXW,
             },
         },
     },
@@ -30,6 +29,9 @@ use windows::{
 
 // PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016
 const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x00020016;
+
+// Note: We don't need to implement From<WindowsError> for CoreError here
+// because it's already implemented in the error.rs file as WindowsError variant
 
 /// Represents an active ConPTY session.
 #[derive(Debug)]
@@ -58,18 +60,23 @@ impl ConPtySession {
         let (stdout_reader, stdout_writer) = create_pipe()?;
 
         // 2. Create the Pseudo Console
-        let size = windows::Win32::Foundation::COORD { X: cols, Y: rows };
-        let mut pty_handle: HPCON = INVALID_HANDLE_VALUE;
-        unsafe {
+        let size = COORD { X: cols, Y: rows };
+        
+        // Convert OwnedHandle to HANDLE for CreatePseudoConsole
+        let stdin_handle = HANDLE(stdin_reader.as_raw_handle() as isize);
+        let stdout_handle = HANDLE(stdout_writer.as_raw_handle() as isize);
+
+        // CreatePseudoConsole takes 4 parameters and returns an HPCON result
+        let pty_handle = unsafe {
             CreatePseudoConsole(
                 size,
-                stdin_reader.as_raw_handle() as HANDLE, // Input Read handle
-                stdout_writer.as_raw_handle() as HANDLE, // Output Write handle
-                0, // Flags
-                &mut pty_handle,
+                stdin_handle, 
+                stdout_handle, 
+                0u32 // Flags - cast to u32 explicitly
             )
         }
-        .context("Failed to create pseudo console")?;
+        .map_err(CoreError::from)?;
+        
         info!("Pseudo Console created with handle: {:?}", pty_handle);
 
         // Close the handles we don't need in this process
@@ -97,7 +104,7 @@ impl ConPtySession {
                 &mut process_info, // Process information
             )
         }
-        .context(format!("Failed to create process for command: {}", command))?;
+        .map_err(CoreError::from)?;
 
         info!(
             "Child process created with PID: {}",
@@ -106,17 +113,10 @@ impl ConPtySession {
 
         // Clean up attribute list
         unsafe {
-             if !si_startup_info.lpAttributeList.is_null() {
+             if !si_startup_info.lpAttributeList.0.is_null() {
                 DeleteProcThreadAttributeList(si_startup_info.lpAttributeList);
-                // Assuming Box::from_raw is the correct way to free memory allocated by Vec::into_boxed_slice
-                // This might need adjustment based on how lpAttributeList was allocated.
-                // If Vec::into_raw_parts was used, Box::from_raw might be appropriate.
-                // If allocated differently, use the corresponding deallocation method.
-                // For now, let's assume it was managed correctly and DeleteProcThreadAttributeList is sufficient.
-                // std::alloc::dealloc(si_startup_info.lpAttributeList as *mut u8, std::alloc::Layout::for_value(si_startup_info.lpAttributeList));
              }
         }
-
 
         Ok(Self {
             pty_handle,
@@ -129,15 +129,25 @@ impl ConPtySession {
     /// Resizes the pseudo console.
     pub fn resize(&self, cols: i16, rows: i16) -> CoreResult<()> {
         debug!("Resizing ConPTY to {}x{}", cols, rows);
-        let size = windows::Win32::Foundation::COORD { X: cols, Y: rows };
+        let size = COORD { X: cols, Y: rows };
         unsafe { ResizePseudoConsole(self.pty_handle, size) }
-            .context("Failed to resize pseudo console")?;
+            .map_err(CoreError::from)?;
         Ok(())
     }
 
     /// Writes data to the pseudo console's input (stdin).
     pub fn write(&mut self, data: &[u8]) -> CoreResult<usize> {
-        let bytes_written = self.input_writer.write(data).context("Failed to write to ConPTY input")?;
+        // Convert OwnedHandle to File to use Write trait
+        let handle_raw = self.input_writer.as_raw_handle();
+        let mut file = unsafe { File::from_raw_handle(handle_raw) };
+        
+        // Write data
+        let result = file.write(data).map_err(CoreError::IoError);
+        
+        // Prevent file from closing the handle when dropped
+        let _ = file.into_raw_handle();
+        
+        let bytes_written = result?;
         debug!("Wrote {} bytes to ConPTY input", bytes_written);
         Ok(bytes_written)
     }
@@ -145,7 +155,17 @@ impl ConPtySession {
     /// Reads data from the pseudo console's output (stdout).
     /// This is a blocking read. Consider using asynchronous reads or threads.
     pub fn read(&mut self, buf: &mut [u8]) -> CoreResult<usize> {
-        let bytes_read = self.output_reader.read(buf).context("Failed to read from ConPTY output")?;
+        // Convert OwnedHandle to File to use Read trait
+        let handle_raw = self.output_reader.as_raw_handle();
+        let mut file = unsafe { File::from_raw_handle(handle_raw) };
+        
+        // Read data
+        let result = file.read(buf).map_err(CoreError::IoError);
+        
+        // Prevent file from closing the handle when dropped
+        let _ = file.into_raw_handle();
+        
+        let bytes_read = result?;
         debug!("Read {} bytes from ConPTY output", bytes_read);
         Ok(bytes_read)
     }
@@ -155,14 +175,16 @@ impl ConPtySession {
         let mut total_bytes_avail = 0u32;
         unsafe {
             PeekNamedPipe(
-                self.output_reader.as_raw_handle() as HANDLE,
+                HANDLE(self.output_reader.as_raw_handle() as isize),
                 None, // buffer
                 0, // buffer size
                 None, // bytes read
                 Some(&mut total_bytes_avail), // total bytes available
                 None, // bytes left this message
             )
-        }.context("Failed to peek named pipe for ConPTY output")?;
+            .map_err(CoreError::from)
+        }?;
+        
         Ok(total_bytes_avail > 0)
     }
 
@@ -170,7 +192,7 @@ impl ConPtySession {
     pub fn get_exit_code(&self) -> CoreResult<Option<u32>> {
         let mut exit_code: u32 = 0;
         unsafe { GetExitCodeProcess(self.process_info.hProcess, &mut exit_code) }
-            .context("Failed to get process exit code")?;
+            .map_err(CoreError::from)?;
 
         // STILL_ACTIVE = 259
         if exit_code == 259 {
@@ -185,25 +207,25 @@ impl ConPtySession {
         info!("Terminating ConPTY session (PID: {})", self.process_info.dwProcessId);
         unsafe {
             // Terminate the child process
-            if TerminateProcess(self.process_info.hProcess, 1).is_err() {
-                 error!("Failed to terminate child process (PID: {})", self.process_info.dwProcessId);
-                 // Continue cleanup even if termination fails
+            if let Err(e) = TerminateProcess(self.process_info.hProcess, 1) {
+                error!("Failed to terminate child process (PID: {}): {:?}", self.process_info.dwProcessId, e);
+                // Continue cleanup even if termination fails
             }
 
             // Close process and thread handles
             if self.process_info.hProcess != INVALID_HANDLE_VALUE {
-                CloseHandle(self.process_info.hProcess);
+                // Ignore errors on close since we're cleaning up anyway
+                let _ = CloseHandle(self.process_info.hProcess);
             }
             if self.process_info.hThread != INVALID_HANDLE_VALUE {
-                CloseHandle(self.process_info.hThread);
+                // Ignore errors on close since we're cleaning up anyway
+                let _ = CloseHandle(self.process_info.hThread);
             }
 
-            // Close the PTY handle
-            if self.pty_handle != INVALID_HANDLE_VALUE {
-                 // ClosePseudoConsole is not available in all versions of windows-rs?
-                 // Using CloseHandle as a fallback, though ClosePseudoConsole is preferred if available.
-                 CloseHandle(self.pty_handle);
-            }
+            // Close the PTY handle - we don't check against INVALID_HANDLE_VALUE here
+            // Just convert HPCON to HANDLE for CloseHandle
+            let handle = HANDLE(self.pty_handle.0);
+            let _ = CloseHandle(handle);
         }
         // Input/Output handles are OwnedHandle, they will be closed on drop.
         Ok(())
@@ -222,72 +244,76 @@ impl Drop for ConPtySession {
 fn create_pipe() -> CoreResult<(OwnedHandle, OwnedHandle)> {
     let mut read_pipe: HANDLE = INVALID_HANDLE_VALUE;
     let mut write_pipe: HANDLE = INVALID_HANDLE_VALUE;
-    unsafe { CreatePipe(&mut read_pipe, &mut write_pipe, None, 0) }
-        .context("Failed to create pipe")?;
-    unsafe {
+    
+    unsafe { 
+        CreatePipe(&mut read_pipe, &mut write_pipe, None, 0)
+            .map_err(CoreError::from)?;
+            
         Ok((
-            OwnedHandle::from_raw_handle(read_pipe as *mut _),
-            OwnedHandle::from_raw_handle(write_pipe as *mut _),
+            OwnedHandle::from_raw_handle(read_pipe.0 as *mut _),
+            OwnedHandle::from_raw_handle(write_pipe.0 as *mut _),
         ))
     }
 }
 
-// Helper function to prepare startup info
+// Prepare startup info structure with pseudo console
 fn prepare_startup_info(pty_handle: HPCON) -> CoreResult<STARTUPINFOEXW> {
-    unsafe {
-        let mut si_startup_info: STARTUPINFOEXW = zeroed();
-        si_startup_info.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
-
-        // Get required size for attribute list
-        let mut attribute_list_size: usize = 0;
-        InitializeProcThreadAttributeList(
-            None, // No list yet
-            1,    // One attribute (PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE)
-            0,
-            &mut attribute_list_size,
+    // Calculate the size of the attribute list
+    let mut size: usize = 0;
+    unsafe { 
+        // First call gets the needed size
+        // This call is expected to fail with ERROR_INSUFFICIENT_BUFFER
+        // We just need the returned size
+        let null_ptr = std::ptr::null_mut::<c_void>();
+        let _ = InitializeProcThreadAttributeList(
+            LPPROC_THREAD_ATTRIBUTE_LIST(null_ptr), 
+            1, 
+            0, 
+            &mut size
         );
-        // This call is expected to fail with ERROR_INSUFFICIENT_BUFFER,
-        // but it gives us the required size in attribute_list_size.
+    }
 
-        // Allocate memory for the attribute list
-        // Using Vec<u8> and then converting to pointer for RAII-like management
-        let mut attribute_list_mem = vec![0u8; attribute_list_size];
-        let attribute_list_ptr = attribute_list_mem.as_mut_ptr() as PROC_THREAD_ATTRIBUTE_LIST;
+    // Allocate attribute list memory
+    let mut attribute_list_data = vec![0u8; size];
+    let attribute_list_ptr = LPPROC_THREAD_ATTRIBUTE_LIST(attribute_list_data.as_mut_ptr() as *mut c_void);
 
-        // Initialize the attribute list
+    // Initialize the attribute list
+    unsafe {
         InitializeProcThreadAttributeList(
             attribute_list_ptr,
-            1, // One attribute
+            1,
             0,
-            &mut attribute_list_size,
+            &mut size
         )
-        .context("Failed to initialize proc thread attribute list")?;
-
-        // Set the pseudoconsole attribute
-        UpdateProcThreadAttribute(
-            attribute_list_ptr,
-            0,
-            PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, // Attribute identifier
-            Some(pty_handle as *const _ as *const std::ffi::c_void), // PTY handle
-            size_of::<HPCON>(), // Size of the handle
-            None,
-            None,
-        )
-        .context("Failed to update proc thread attribute for pseudoconsole")?;
-
-        si_startup_info.lpAttributeList = attribute_list_ptr;
-
-        // Prevent the attribute list memory from being dropped by Vec
-        std::mem::forget(attribute_list_mem);
-
-        Ok(si_startup_info)
+        .map_err(CoreError::from)?;
     }
+
+    // Create startup info structure
+    let mut si_startup_info: STARTUPINFOEXW = unsafe { zeroed() };
+    si_startup_info.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+    si_startup_info.lpAttributeList = attribute_list_ptr;
+
+    // Add the console reference to the attribute list
+    unsafe {
+        UpdateProcThreadAttribute(
+            si_startup_info.lpAttributeList,
+            0,
+            PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+            Some(pty_handle.0 as *const c_void),
+            std::mem::size_of::<HPCON>(),
+            None,
+            None
+        )
+        .map_err(CoreError::from)?;
+    }
+
+    Ok(si_startup_info)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::{time::Duration, thread};
 
     // Helper to initialize logging for tests
     fn setup() {

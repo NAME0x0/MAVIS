@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, Table};
 
 /// Registers widget-related functions into the Lua state.
 /// Creates the `mavis.widgets` table.
@@ -7,7 +7,7 @@ pub fn register_widget_functions(lua: &Lua, mavis_table: &Table) -> Result<(), C
     let widgets_table = super::create_nested_table(lua, mavis_table, "widgets")?;
 
     // Placeholder for add_widget function
-    let add_widget = lua.create_function(|_lua, (area, config): (String, Table)| {
+    let add_widget = lua.create_function(|_lua, (area, _config): (String, Table)| {
         // TODO: Implement actual widget addition logic.
         // This will involve parsing the config table, creating the widget state,
         // and communicating with the GUI to display it in the specified area.

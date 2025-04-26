@@ -1,23 +1,18 @@
 use anyhow::{Context, Result}; // Using anyhow for easy error handling in main
-use log::{error, info, LevelFilter};
+use log::{debug, error, info, LevelFilter};
 use mavis_core::{
-    config::{ConfigLoader, ConfigWatcher, Config as CoreConfig}, // Import CoreConfig
-    error::CoreError,
+    config::{ConfigLoader, ConfigWatcher},
     lua::ScriptEngine,
     monitor::ResourceMonitor,
     conpty::ConPtySession,
 };
 use mavis_gui::{self, state::GuiState};
 use std::{
-    io::Read, // Added Read trait
-    path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, // Added mpsc
+        mpsc,
         Arc, Mutex,
     },
-    thread, // Added thread
-    time::Duration,
+    thread,
 };
 
 // Shared state or communication channel between threads might be needed later
@@ -37,15 +32,14 @@ fn main() -> Result<()> {
 
     // 3. Load Configuration Environment
     // ConfigLoader now ensures the directory exists and copies defaults
-    let (mut core_config, config_dir) = ConfigLoader::ensure_config_env()
+    let (core_config, config_dir) = ConfigLoader::ensure_config_env()
         .context("Failed to ensure configuration environment")?;
     info!("Using configuration directory: {:?}", config_dir);
 
     // 4. Initialize Lua Script Engine
     // The ScriptEngine will load init.lua, which applies the actual config
-    let script_engine = Arc::new(
-        ScriptEngine::new(&core_config).context("Failed to initialize Lua script engine")?,
-    );
+    let script_engine = 
+        ScriptEngine::new(&core_config).context("Failed to initialize Lua script engine")?;
 
     // Execute initial configuration scripts (e.g., init.lua)
     // TODO: Determine the exact script(s) to run initially. init.lua seems logical.
@@ -70,60 +64,63 @@ fn main() -> Result<()> {
         .context("Failed to initialize resource monitor")?;
     resource_monitor
         .start(&core_config)
-        .context("Failed to start resource monitor")?;
+        .context("Failed to start resource monitor")?;    
     info!("Resource monitor started.");
 
+    // Define message types for config reload channel
+    #[derive(Debug)]
+    enum ConfigReloadRequest {
+        ReloadInitScript(std::path::PathBuf),
+        ReloadTheme(String),
+    }
+
     // 6. Initialize Config Watcher
-    let mut config_watcher =
-        ConfigWatcher::new().context("Failed to initialize config watcher")?;
-
-    // --- Reload Callback ---
-    // Define what happens when a config file changes
-    let script_engine_clone = script_engine.clone();
-    config_watcher.add_reload_callback(move |changed_path| {
-        info!("Config file change detected: {:?}", changed_path);
-        // Determine which script(s) to reload based on the path
-        // For now, let's just reload init.lua for any .lua change in config dir
-        // and potentially trigger theme reload for .json in themes dir
-        let config_dir_clone = config_dir.clone(); // Clone for closure
-        let script_engine_inner_clone = script_engine_clone.clone(); // Clone Arc
-
-        // TODO: Make reload logic more granular based on changed_path
-        if changed_path
-            .extension()
-            .map_or(false, |ext| ext == "lua")
-            && changed_path.starts_with(&config_dir_clone)
-        {
-            let init_script = config_dir_clone.join("init.lua");
-            if init_script.exists() {
-                info!("Reloading Lua script: {:?}", init_script);
-                // It might be better to re-create the Lua state or clear relevant parts
-                // before reloading to avoid accumulating state or errors.
-                // For now, just reload the script.
-                match script_engine_inner_clone.load_script(&init_script) {
-                    Ok(_) => info!("Successfully reloaded {:?}", init_script),
-                    Err(e) => error!("Failed to reload {:?}: {}", init_script, e),
+    // 6. Initialize Config Watcher
+        let mut config_watcher =
+            ConfigWatcher::new().context("Failed to initialize config watcher")?;
+    
+        // --- Reload Callback ---
+        // Define what happens when a config file changes
+        // Use a channel to send reload requests to the main thread (or GUI thread)
+        // as mlua::Lua is not Send/Sync.
+        let (reload_tx, reload_rx) = mpsc::channel::<ConfigReloadRequest>();
+        
+        // Clone only the necessary information for the watcher thread, not the ScriptEngine
+        let config_dir_for_watcher = config_dir.clone();
+        let reload_tx_for_watcher = reload_tx.clone();
+    
+        config_watcher.add_reload_callback(move |changed_path| {
+            info!("Config file change detected: {:?}", changed_path);
+            
+            // Determine which script(s) to reload based on the path
+            // Send a message instead of directly interacting with Lua state
+            if changed_path
+                .extension()
+                .map_or(false, |ext| ext == "lua")
+                && changed_path.starts_with(&config_dir_for_watcher)
+            {
+                let init_script = config_dir_for_watcher.join("init.lua");
+                if init_script.exists() {
+                    info!("Queueing Lua script reload: {:?}", init_script);
+                    if let Err(e) = reload_tx_for_watcher.send(ConfigReloadRequest::ReloadInitScript(init_script)) {
+                        error!("Failed to send reload request for init script: {}", e);
+                    }
                 }
-                // TODO: Signal GUI to update based on potential config changes
-            }
-        } else if changed_path
-            .extension()
-            .map_or(false, |ext| ext == "json") // Assuming themes are JSON
-            && changed_path.starts_with(&config_dir_clone.parent().unwrap().join("themes"))
-        {
-            info!("Theme file changed: {:?}", changed_path);
-            // TODO: Signal GUI to reload the specific theme or re-apply theme settings.
-            // This might involve calling a Lua function like mavis.theme.set_theme(...)
-            let theme_name = changed_path.file_stem().unwrap_or_default().to_string_lossy();
-             if !theme_name.is_empty() {
-                 match script_engine_inner_clone.eval::<()>(&format!("MAVIS.theme.set_theme('{}')", theme_name)) {
-                     Ok(_) => info!("Applied theme '{}' via Lua", theme_name),
-                     Err(e) => error!("Failed to apply theme '{}' via Lua: {}", theme_name, e),
+            } else if changed_path
+                .extension()
+                .map_or(false, |ext| ext == "json") // Assuming themes are JSON
+                && changed_path.starts_with(&config_dir_for_watcher.parent().unwrap().join("themes")) // TODO: Improve theme dir detection
+            {
+                info!("Theme file changed: {:?}", changed_path);
+                let theme_name = changed_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                 if !theme_name.is_empty() {
+                     info!("Queueing theme application: '{}'", theme_name);
+                     if let Err(e) = reload_tx_for_watcher.send(ConfigReloadRequest::ReloadTheme(theme_name)) {
+                         error!("Failed to send reload request for theme: {}", e);
+                     }
                  }
-             }
-        }
-    });
-    // --- End Reload Callback ---
+            }
+        });
 
     config_watcher
         .start_watching()
@@ -157,10 +154,10 @@ fn main() -> Result<()> {
 
             loop {
                 // Lock the session mutex to access the read method
-                let read_result = {
+                let read_result: Result<Vec<u8>, std::io::Error> = {
                     let mut session_guard = match session_arc.lock() {
                         Ok(guard) => guard,
-                        Err(poisoned) => {
+                        Err(_) => {
                             error!("ConPTY session mutex poisoned! Reader thread exiting.");
                             // Send an empty vec to signal error/exit? Or just break.
                             let _ = tx_clone.send(Vec::new()); // Signal exit/error
@@ -202,30 +199,65 @@ fn main() -> Result<()> {
 
                 // Optional: Add a small sleep to prevent tight loop if needed,
                 // but blocking read should handle this.
-                // thread::sleep(Duration::from_millis(10));
             }
-            info!("ConPTY reader thread finished.");
         }));
-        info!("ConPTY reader thread spawned.");
     }
-
-
+    
     // 9. Initialize and Run the GUI
+    // The GUI thread will own the ScriptEngine and handle reload requests
     let gui_state = Arc::new(Mutex::new(GuiState {
         conpty_session: conpty_session_arc, // Use the original Arc here
         conpty_output_rx: Some(conpty_output_rx), // Store the receiver end
         conpty_output_tx: Some(conpty_output_tx), // Store sender for potential input later
-        ..GuiState::new()
+        should_exit: false,
+        resource_usage: Default::default(),
+        widget_visibility: Default::default(),
+        show_demo_window: false,
+        terminal_state: Default::default(),
+        show_terminal: true,
+        ide_state: Default::default(),
     }));
-    info!("Launching GUI...");
-
     // Pass the shared state to the GUI function.
-    if let Err(e) = mavis_gui::run_gui(&core_config, gui_state.clone()) {
-        error!("GUI exited with error: {}", e);
-        // Perform any cleanup before exiting the application
-    }
+    // The GUI loop should now poll `reload_rx` and handle messages.
+    
+    // Create a simple GUI loop to handle the Lua operations in the main thread
+    let script_engine = script_engine;
+    mavis_gui::run_gui(&core_config, gui_state.clone())?;
 
-    // 10. Cleanup
+    // Process any config reload requests in a separate loop
+    let mut running = true;
+    while running {
+        if let Ok(request) = reload_rx.try_recv() {
+            match request {
+                ConfigReloadRequest::ReloadInitScript(script_path) => {
+                    info!("Reloading script: {:?}", script_path);
+                    if let Err(e) = script_engine.load_script(&script_path) {
+                        error!("Failed to reload script: {}", e);
+                    }
+                },
+                ConfigReloadRequest::ReloadTheme(theme_name) => {
+                    info!("Applying theme: {}", theme_name);
+                    // Here you would apply the theme using script_engine
+                    // For example:
+                    // if let Err(e) = script_engine.call_function("apply_theme", theme_name) {
+                    //     error!("Failed to apply theme: {}", e);
+                    // }
+                }
+            }
+        }
+        
+        // Check if we should exit
+        let should_exit = {
+            let state = gui_state.lock().unwrap();
+            state.should_exit
+        };
+        
+        running = !should_exit;
+        std::thread::sleep(std::time::Duration::from_millis(100)); // Avoid busy-waiting
+    }
+    
+    info!("MAVIS Shell shutting down.");
+    // The GUI loop should now poll `config_reload_rx` and handle messages.
     info!("MAVIS Shell shutting down.");
     // ConPtySession Drop handles termination.
     // Wait for reader thread to finish if it was started.

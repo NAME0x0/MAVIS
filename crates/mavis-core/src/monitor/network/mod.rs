@@ -2,7 +2,7 @@
 
 use crate::error::CoreError;
 use log::{debug, warn};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use windows::Win32::System::Performance::{
     PdhAddEnglishCounterW, PdhCollectQueryData, PdhGetFormattedCounterValue,
     PdhOpenQueryW, PDH_FMT_LARGE, PDH_FMT_COUNTERVALUE,
@@ -13,11 +13,8 @@ pub struct NetworkMonitor {
     query_handle: isize,
     bytes_in_counter: isize,
     bytes_out_counter: isize,
-    last_bytes_in: u64,
-    last_bytes_out: u64,
     last_in_rate: u64,
     last_out_rate: u64,
-    last_check: Instant,
 }
 
 impl NetworkMonitor {
@@ -95,11 +92,8 @@ impl NetworkMonitor {
             query_handle,
             bytes_in_counter,
             bytes_out_counter,
-            last_bytes_in: 0,
-            last_bytes_out: 0,
             last_in_rate: 0,
             last_out_rate: 0,
-            last_check: Instant::now(),
         };
         
         Ok(monitor)

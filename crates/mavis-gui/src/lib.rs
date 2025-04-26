@@ -2,6 +2,7 @@
 
 // Modules
 pub mod error;
+pub mod ide; // NEW: Scintilla IDE component
 pub mod renderer;
 pub mod state;
 pub mod ui;

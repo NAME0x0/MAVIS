@@ -1,13 +1,13 @@
 // Configuration file watcher for hot reloading
 
 use crate::error::CoreError;
-use crate::utils; // Assuming get_local_app_data is here
 use log::{debug, error, info, warn};
-use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex}; // Keep Mutex for the callback Vec
-use std::thread;
+use notify::{
+    Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Result as NotifyResult,
+    Watcher,
+}; // Adjusted imports
+use std::path::PathBuf; // Removed Path as it's unused
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Callback type for configuration reload requests.
@@ -15,9 +15,10 @@ pub type ReloadCallback = Box<dyn FnMut(PathBuf) + Send + 'static>; // Pass chan
 
 /// Watches configuration files and directories for changes to trigger hot reloading.
 pub struct ConfigWatcher {
+    // Watcher is kept alive by holding this Option. Dropping it stops watching.
     watcher: Option<RecommendedWatcher>,
-    _thread_handle: Option<thread::JoinHandle<()>>,
-    callbacks: Arc<Mutex<Vec<ReloadCallback>>>, // Callbacks need to be shared with the thread
+    // Callbacks are invoked directly by the notify crate's event handler.
+    callbacks: Arc<Mutex<Vec<ReloadCallback>>>,
 }
 
 impl ConfigWatcher {
@@ -25,7 +26,6 @@ impl ConfigWatcher {
     pub fn new() -> Result<Self, CoreError> {
         Ok(Self {
             watcher: None,
-            _thread_handle: None,
             callbacks: Arc::new(Mutex::new(Vec::new())),
         })
     }
@@ -37,23 +37,61 @@ impl ConfigWatcher {
             return Ok(());
         }
 
-        let (tx, rx) = mpsc::channel();
+        // Clone Arc for the callback closure
+        let callbacks = self.callbacks.clone();
 
-        // Create a watcher
+        // Define the event handler closure (notify v6 API)
+        let event_handler = move |res: NotifyResult<Event>| {
+            match res {
+                Ok(event) => {
+                    // Use match for EventKind (v6 API)
+                    match event.kind {
+                        // Check relevant kinds: Create, Modify, Remove
+                        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
+                            for path in event.paths {
+                                // Check if it's a file type we care about
+                                if path.extension().map_or(false, |ext| ext == "lua" || ext == "json") {
+                                    debug!("Config/theme file change detected: {:?}", path);
+                                    // Trigger callbacks
+                                    let mut locked_callbacks = match callbacks.lock() {
+                                        Ok(guard) => guard,
+                                        Err(poisoned) => {
+                                            error!("Callback mutex poisoned: {}", poisoned);
+                                            // Attempt to recover or simply return
+                                            poisoned.into_inner()
+                                        }
+                                    };
+                                    for callback in locked_callbacks.iter_mut() {
+                                        // Execute the callback, passing the changed path
+                                        callback(path.clone());
+                                    }
+                                    // Break inner loop once a relevant file is found in the event
+                                    break;
+                                }
+                            }
+                        }
+                        _ => { /* Ignore other event kinds like Access, Other */ }
+                    }
+                }
+                Err(e) => error!("File watch error: {:?}", e),
+            }
+        };
+
+        // Create a watcher with the callback and config
         let mut watcher = RecommendedWatcher::new(
-            tx,
-            NotifyConfig::default().with_poll_interval(Duration::from_secs(2)), // Slightly longer poll interval
+            event_handler, // Pass the closure directly
+            NotifyConfig::default().with_poll_interval(Duration::from_secs(2)),
         )
         .map_err(|e| CoreError::NotifyError(format!("Failed to create file watcher: {}", e)))?;
 
         // Determine directories to watch
         let user_config_dir = super::loader::ConfigLoader::get_user_config_dir()?;
-        let user_themes_dir = user_config_dir.parent().unwrap().join("themes"); // Assumes themes dir is sibling to config
+        let user_themes_dir = user_config_dir.parent().ok_or_else(|| CoreError::ConfigError("Failed to get parent directory for themes".to_string()))?.join("themes"); // Safer parent access
 
         // Watch config directory
         if user_config_dir.exists() {
             watcher
-                .watch(&user_config_dir, RecursiveMode::Recursive)
+                .watch(user_config_dir.as_path(), RecursiveMode::Recursive) // Use as_path()
                 .map_err(|e| {
                     CoreError::NotifyError(format!(
                         "Failed to watch config directory {:?}: {}",
@@ -72,14 +110,14 @@ impl ConfigWatcher {
         if !user_themes_dir.exists() {
             info!("Creating user themes directory at {:?}", user_themes_dir);
             std::fs::create_dir_all(&user_themes_dir).map_err(|e| {
-                CoreError::ConfigError(format!(
-                    "Failed to create user themes directory {:?}: {}",
-                    user_themes_dir, e
+                CoreError::IoError(std::io::Error::new( // Use IoError for fs operations
+                    std::io::ErrorKind::Other,
+                    format!("Failed to create user themes directory {:?}: {}", user_themes_dir, e)
                 ))
             })?;
         }
         watcher
-            .watch(&user_themes_dir, RecursiveMode::Recursive)
+            .watch(user_themes_dir.as_path(), RecursiveMode::Recursive) // Use as_path()
             .map_err(|e| {
                 CoreError::NotifyError(format!(
                     "Failed to watch themes directory {:?}: {}",
@@ -88,61 +126,22 @@ impl ConfigWatcher {
             })?;
         info!("Started watching themes directory: {:?}", user_themes_dir);
 
+        // Store the watcher to keep it alive
         self.watcher = Some(watcher);
 
-        // Clone Arc for the thread
-        let callbacks = self.callbacks.clone();
-
-        // Spawn thread to handle events
-        let thread_handle = thread::spawn(move || {
-            Self::event_handler_loop(rx, callbacks);
-        });
-
-        self._thread_handle = Some(thread_handle);
+        // No separate thread needed; notify handles event dispatch
 
         Ok(())
     }
 
-    /// The loop running on the watcher thread to process events.
-    fn event_handler_loop(
-        rx: mpsc::Receiver<Result<Event, notify::Error>>,
-        callbacks: Arc<Mutex<Vec<ReloadCallback>>>,
-    ) {
-        info!("Config watcher thread started.");
-        for result in rx {
-            match result {
-                Ok(event) => {
-                    // Check for relevant modification events (Create, Modify, Rename)
-                    // We check for create/rename too in case files are edited via temp file swaps.
-                    if event.kind.is_modify() || event.kind.is_create() || event.kind.is_rename() {
-                        for path in event.paths {
-                            // Check if it's a file type we care about
-                            if path.extension().map_or(false, |ext| ext == "lua" || ext == "json") {
-                                debug!("Config/theme file change detected: {:?}", path);
-                                // Trigger callbacks
-                                let mut locked_callbacks = callbacks.lock().unwrap();
-                                for callback in locked_callbacks.iter_mut() {
-                                    // Execute the callback, passing the changed path
-                                    callback(path.clone());
-                                }
-                                // Break inner loop once a relevant file is found in the event
-                                break;
-                            }
-                        }
-                    }
-                }
-                Err(e) => error!("File watch error: {:?}", e),
-            }
-        }
-        info!("Config watcher thread finished.");
-    }
+    // event_handler_loop is no longer needed
 
     /// Registers a callback to be invoked when a relevant config/theme file changes.
     pub fn add_reload_callback<F>(&mut self, callback: F)
     where
         F: FnMut(PathBuf) + Send + 'static,
     {
-        let mut locked_callbacks = self.callbacks.lock().unwrap();
+        let mut locked_callbacks = self.callbacks.lock().unwrap(); // Handle potential poisoning if needed
         locked_callbacks.push(Box::new(callback));
         info!("Added reload callback.");
     }
@@ -150,12 +149,5 @@ impl ConfigWatcher {
     // Removed get_config() as watcher no longer holds config state.
 }
 
-// Optional: Implement Drop to ensure the watcher is cleaned up?
-// impl Drop for ConfigWatcher {
-//     fn drop(&mut self) {
-//         info!("Dropping ConfigWatcher.");
-//         // The watcher should automatically unwatch when dropped.
-//         // We might want to join the thread handle here if necessary,
-//         // but it might block shutdown. Consider if needed.
-//     }
-// }
+// Drop implementation is usually not needed for RecommendedWatcher,
+// as dropping the watcher instance automatically stops watching.

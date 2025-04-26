@@ -55,7 +55,7 @@ pub fn apply_sandbox(lua: &Lua, unsafe_mode: bool) -> LuaResult<()> {
         .cloned()
         .collect::<HashSet<&str>>();
         
-    sandbox_require(lua, globals, allowed_modules_set)?;
+    sandbox_require(lua, &globals, allowed_modules_set)?;
     
     // Apply other sandbox restrictions
     disable_metatable_access(lua)?;
@@ -68,7 +68,7 @@ pub fn apply_sandbox(lua: &Lua, unsafe_mode: bool) -> LuaResult<()> {
 }
 
 /// Remove a function from the Lua environment
-fn remove_function(lua: &Lua, globals: &Table, path: &str) -> LuaResult<()> {
+fn remove_function(_lua: &Lua, globals: &Table, path: &str) -> LuaResult<()> {
     let parts: Vec<&str> = path.split('.').collect();
     
     if parts.len() == 1 {
@@ -102,26 +102,44 @@ fn remove_function(lua: &Lua, globals: &Table, path: &str) -> LuaResult<()> {
 
 /// Override the require function to only allow specific modules
 fn sandbox_require(lua: &Lua, globals: &Table, allowed_modules: HashSet<&str>) -> LuaResult<()> {
-    // First, get the original require function
-    let original_require: mlua::Function = match globals.get("require") {
-        Ok(require_fn) => require_fn,
-        Err(_) => return Ok(()),  // If require doesn't exist, nothing to do
-    };
-    
-    // Create our sandboxed require function
-    let sandboxed_require = lua.create_function(move |lua_ctx, module_name: String| {
-        if allowed_modules.contains(module_name.as_str()) {
-            // Call the original require with the module name
-            original_require.call::<_, Value>(module_name)
-        } else {
-            Err(LuaError::RuntimeError(
-                format!("Module '{}' is not allowed by the security sandbox", module_name)
-            ))
-        }
-    })?;
-    
-    // Replace the global require function
-    globals.set("require", sandboxed_require)?;
+    // Check if require exists
+    if globals.contains_key("require")? {
+        // Convert HashSet<&str> to HashSet<String> to own the data
+        let allowed_modules_owned: HashSet<String> = allowed_modules.into_iter()
+                                                     .map(|s| s.to_string())
+                                                     .collect();
+        
+        // Store the module name in a global variable that our sandboxed require will use
+        lua.globals().set("__SANDBOX_MODULE_NAME", "")?;
+        
+        // Create a function to check if a module is allowed
+        let check_allowed = lua.create_function(move |lua_ctx, module_name: String| {
+            if allowed_modules_owned.contains(&module_name) {
+                // Set the module name in the global
+                lua_ctx.globals().set("__SANDBOX_MODULE_NAME", module_name)?;
+                Ok(true)
+            } else {
+                Err(LuaError::RuntimeError(
+                    format!("Module '{}' is not allowed by the security sandbox", module_name)
+                ))
+            }
+        })?;
+        
+        // Register the allow checker function
+        globals.set("__check_module_allowed", check_allowed)?;
+        
+        // Create and set the sandboxed require function using Lua code
+        // This approach avoids the need to capture the original require function in Rust
+        lua.load(r#"
+            local original_require = require
+            require = function(module)
+                if __check_module_allowed(module) then
+                    -- Use the original require with the module we already validated
+                    return original_require(__SANDBOX_MODULE_NAME)
+                end
+            end
+        "#).exec()?;
+    }
     
     Ok(())
 }
@@ -129,12 +147,12 @@ fn sandbox_require(lua: &Lua, globals: &Table, allowed_modules: HashSet<&str>) -
 /// Disable access to metatables for security
 fn disable_metatable_access(lua: &Lua) -> LuaResult<()> {
     // Override getmetatable to return nil
-    let sandboxed_getmetatable = lua.create_function(|_, _: Value| {
+    let sandboxed_getmetatable = lua.create_function(|_lua_ctx, _: Value| {
         Ok(Value::Nil)
     })?;
     
     // Override setmetatable to be a no-op that returns the original table
-    let sandboxed_setmetatable = lua.create_function(|_, (table, _): (Table, Value)| {
+    let sandboxed_setmetatable = lua.create_function(|_lua_ctx, (table, _): (Table, Value)| {
         Ok(table)
     })?;
     
@@ -147,7 +165,7 @@ fn disable_metatable_access(lua: &Lua) -> LuaResult<()> {
 }
 
 /// Apply an instruction limit to prevent infinite loops
-fn apply_instruction_limit(lua: &Lua) -> LuaResult<()> {
+fn apply_instruction_limit(_lua: &Lua) -> LuaResult<()> {
     // Set an instruction limit hook (e.g., 1,000,000 instructions)
     // This helps prevent infinite loops or excessive CPU usage
     

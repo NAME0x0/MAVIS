@@ -5,7 +5,7 @@ pub mod config;
 pub mod error;
 pub mod lua;
 pub mod monitor;
-pub mod theme;
+// pub mod theme; // Removed: Theme is part of lua::api, not top-level
 pub mod utils;
 pub mod conpty; // Added ConPTY module
 

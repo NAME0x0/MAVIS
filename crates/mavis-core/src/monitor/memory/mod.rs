@@ -14,7 +14,6 @@ use windows::Win32::System::SystemInformation::{
 pub struct MemoryMonitor {
     query_handle: isize,
     available_bytes_counter: isize,
-    commit_limit_counter: isize,
     last_total: u64,
     last_used: u64,
     last_percentage: f32,
@@ -25,7 +24,6 @@ impl MemoryMonitor {
     pub fn new() -> Result<Self, CoreError> {
         let mut query_handle = 0;
         let mut available_bytes_counter = 0;
-        let mut commit_limit_counter = 0;
         
         // Initialize PDH query
         let query_result = unsafe {
@@ -61,28 +59,6 @@ impl MemoryMonitor {
             )));
         }
         
-        // Add memory counter for commit limit
-        let counter_path = windows::core::HSTRING::from("\\Memory\\Commit Limit");
-        let counter_result = unsafe {
-            PdhAddEnglishCounterW(
-                query_handle,
-                &counter_path,
-                0,
-                &mut commit_limit_counter,
-            )
-        };
-        
-        if counter_result != 0 {
-            unsafe {
-                windows::Win32::System::Performance::PdhCloseQuery(query_handle);
-            }
-            
-            return Err(CoreError::PdhError(format!(
-                "Failed to add memory commit limit counter: error code {}",
-                counter_result
-            )));
-        }
-        
         // Initial data collection to establish baseline
         unsafe {
             PdhCollectQueryData(query_handle);
@@ -91,7 +67,6 @@ impl MemoryMonitor {
         Ok(Self {
             query_handle,
             available_bytes_counter,
-            commit_limit_counter,
             last_total: 0,
             last_used: 0,
             last_percentage: 0.0,
@@ -110,7 +85,7 @@ impl MemoryMonitor {
             GlobalMemoryStatusEx(&mut memory_status)
         };
         
-        if !status_result.as_bool() {
+        if status_result.is_err() {
             // If GlobalMemoryStatusEx fails, fallback to PDH counters
             return self.get_usage_pdh();
         }
@@ -147,7 +122,7 @@ impl MemoryMonitor {
             dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
             ..Default::default()
         };
-        let total_physical_memory = if unsafe { GlobalMemoryStatusEx(&mut memory_status) }.as_bool() {
+        let total_physical_memory = if unsafe { GlobalMemoryStatusEx(&mut memory_status) }.is_ok() {
             memory_status.ullTotalPhys
         } else {
             // Very unlikely fallback, use last known total or 0

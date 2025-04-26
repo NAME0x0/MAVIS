@@ -18,12 +18,12 @@ pub use theme::register_theme_functions; // Added theme re-export
 pub use widgets::register_widget_functions; // Added widgets re-export
 
 // Helper function to create tables with proper error handling
-pub(crate) fn create_nested_table(lua: &Lua, parent: &Table, name: &str) -> Result<Table, CoreError> {
+pub(crate) fn create_nested_table<'a>(lua: &'a Lua, parent: &'a Table, name: &str) -> Result<Table<'a>, CoreError> {
     let new_table = lua.create_table()
-        .map_err(|e| CoreError::LuaError(format!("Failed to create table '{}': {}", name, e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create table '{}': {}", name, e))))?; // Wrap error
         
     parent.set(name, new_table.clone())
-        .map_err(|e| CoreError::LuaError(format!("Failed to set table '{}': {}", name, e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set table '{}': {}", name, e))))?; // Wrap error
         
     Ok(new_table)
 }

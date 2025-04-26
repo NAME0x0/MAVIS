@@ -9,7 +9,7 @@ pub enum GuiError {
     WindowError(#[from] winit::error::OsError),
 
     #[error("ImGui error: {0}")]
-    ImGuiError(#[from] imgui::Error),
+    ImGuiError(String),
 
     #[error("Renderer error: {0}")]
     RendererError(String), // Generic renderer error for now
@@ -33,13 +33,15 @@ pub enum GuiError {
 // Helper type alias for Result using GuiError
 pub type GuiResult<T> = Result<T, GuiError>;
 
-// Specific conversion for the renderer error type if known
-// Example for imgui_dx11_renderer - adjust if using a different renderer
-impl From<imgui_dx11_renderer::RendererError> for GuiError {
-    fn from(err: imgui_dx11_renderer::RendererError) -> Self {
-        GuiError::RendererError(format!("DirectX 11 Renderer Error: {}", err))
+// For imgui crate
+impl From<String> for GuiError {
+    fn from(err: String) -> Self {
+        GuiError::ImGuiError(err)
     }
 }
+
+// No need for separate renderer error conversion since we're using a String already
+// The imgui_dx11_renderer doesn't expose a public RendererError type
 
 // Add other specific error conversions as needed, e.g., for font-kit
 impl From<font_kit::error::SelectionError> for GuiError {
@@ -47,15 +49,18 @@ impl From<font_kit::error::SelectionError> for GuiError {
         GuiError::FontError(format!("Font selection error: {}", err))
     }
 }
-impl From<font_kit::error::LoadError> for GuiError {
-     fn from(err: font_kit::error::LoadError) -> Self {
-         GuiError::FontError(format!("Font loading error: {}", err))
-     }
+
+// Replace LoadError with FontLoadingError which is the correct type in font-kit
+impl From<font_kit::error::FontLoadingError> for GuiError {
+    fn from(err: font_kit::error::FontLoadingError) -> Self {
+        GuiError::FontError(format!("Font loading error: {}", err))
+    }
 }
 
 // Add conversion for stb_image error
-impl From<stb_image::error::StbImageError> for GuiError {
-    fn from(err: stb_image::error::StbImageError) -> Self {
-        GuiError::ImageError(format!("Image loading error: {}", err))
-    }
+// The stb_image crate doesn't have an error module with StbImageError
+// Instead of implementing From<std::io::Error> again, let's use a custom function
+// since we already have #[from] std::io::Error in the IoError variant
+pub fn image_io_error(err: std::io::Error) -> GuiError {
+    GuiError::ImageError(format!("Image I/O error: {}", err))
 }

@@ -21,6 +21,9 @@ pub enum CoreError {
     // TODO: Consider wrapping the specific error type from the `notify` crate if needed.
     NotifyError(String),
 
+    #[error("PDH error: {0}")]
+    PdhError(String), // Added for Performance Data Helper errors
+
     #[error("Windows API error: {0:?}")]
     WindowsError(#[from] windows::core::Error),
     
@@ -30,3 +33,6 @@ pub enum CoreError {
     #[error("Initialization error: {0}")]
     InitializationError(String),
 }
+
+/// A specialized `Result` type for MAVIS core operations.
+pub type CoreResult<T> = Result<T, CoreError>;

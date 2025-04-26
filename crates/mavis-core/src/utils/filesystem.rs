@@ -32,7 +32,7 @@ pub fn ensure_local_dirs() -> Result<(), CoreError> {
 /// Gets the local app data directory path
 pub fn get_local_app_data() -> Result<PathBuf, CoreError> {
     let local_app_data = env::var("LOCALAPPDATA")
-        .map_err(|_| CoreError::IoError(String::from("LOCALAPPDATA environment variable not found")))?;
+        .map_err(|_| CoreError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "LOCALAPPDATA environment variable not found")))?; // Wrap error
         
     Ok(PathBuf::from(local_app_data))
 }
@@ -81,7 +81,7 @@ pub fn copy_default_themes(install_dir: impl AsRef<Path>) -> Result<(), CoreErro
 pub fn get_install_dir() -> Result<PathBuf, CoreError> {
     let exe_path = env::current_exe()?;
     let install_dir = exe_path.parent()
-        .ok_or_else(|| CoreError::IoError(String::from("Failed to determine installation directory")))?;
+        .ok_or_else(|| CoreError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "Failed to determine installation directory")))?; // Wrap error
         
     Ok(install_dir.to_path_buf())
 }

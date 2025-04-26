@@ -1,0 +1,11 @@
+/target/debug/.fingerprint
+
+/target/debug/build
+
+/target/debug/deps
+
+/target/debug/incremental
+
+/target/.rustc_info.json
+
+/target/debug/.fingerprint/rustc-ap-*

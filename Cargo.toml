@@ -3,14 +3,14 @@ members = [
     "crates/mavis-core",
     "crates/mavis-gui",
     "crates/mavis-shell",
-    "bin"
+    # "bin" # Removed: 'bin' likely contains binary targets, not a separate workspace crate
 ]
 resolver = "2"
 
 [package]
 name = "mavis"
 version = "0.1.0-alpha"
-edition = "2025"
+edition = "2024" # Use the latest stable edition
 authors = ["MAVIS Contributors"]
 description = "Modular AVIS - Advanced Windows Shell Environment"
 repository = "https://github.com/NAME0x0/MAVIS"
@@ -42,6 +42,9 @@ thiserror = "1.0.58"
 anyhow = "1.0.80"
 mlua = { version = "0.9.5", features = ["lua54", "vendored", "serialize"] }
 
+[dev-dependencies]
+criterion = "0.5.1"
+
 [build-dependencies]
 embed-resource = "2.4.1"
 
@@ -59,3 +62,7 @@ opt-level = 3
 default = ["direct2d"]
 direct2d = []
 gdi_fallback = []
+
+[[bench]]
+name = "cpu_cycle"
+harness = false

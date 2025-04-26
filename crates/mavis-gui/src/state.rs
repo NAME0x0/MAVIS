@@ -1,9 +1,10 @@
+use crate::ide::IdeState;
 use crate::widgets::terminal::TerminalWidgetState;
-use mavis_core::{monitor::ResourceUsage, ConPtySession}; // Import ConPtySession
+use mavis_core::{monitor::ResourceUsage, ConPtySession};
 use std::{
     collections::HashMap,
     sync::{
-        mpsc::{Receiver, Sender}, // Add mpsc channel types
+        mpsc::{Receiver, Sender},
         Arc, Mutex,
     },
 };
@@ -34,13 +35,16 @@ pub struct GuiState {
     // State for the terminal widget
     pub terminal_state: TerminalWidgetState,
     pub show_terminal: bool,
+    
+    // Skip complex types that don't implement Serialize/Deserialize
     pub conpty_session: Option<Arc<Mutex<ConPtySession>>>,
 
     // Channel for ConPTY output reading thread
-    #[serde(skip)] // Avoid serialization issues if state is ever serialized
     pub conpty_output_rx: Option<Receiver<Vec<u8>>>,
-    #[serde(skip)]
     pub conpty_output_tx: Option<Sender<Vec<u8>>>, // Kept here temporarily for setup ease
+
+    // State for the IDE component
+    pub ide_state: IdeState, // NEW
 }
 
 impl GuiState {
@@ -56,6 +60,7 @@ impl GuiState {
             conpty_session: None,
             conpty_output_rx: None, // Initialize channel ends as None
             conpty_output_tx: None,
+            ide_state: IdeState::new(), // NEW: Initialize IdeState
         }
     }
 

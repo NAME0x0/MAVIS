@@ -3,7 +3,7 @@
 
 use crate::error::CoreError;
 use log::{debug, info, warn};
-use mlua::{Lua, Table};
+use mlua::{Lua, Table, Value};  // Re-added Value for get_system_info_fn
 use std::process::Command;
 use std::path::Path;
 
@@ -11,7 +11,7 @@ use std::path::Path;
 /// These functions are only available when unsafe mode is enabled
 pub fn register_system_functions(lua: &Lua, table: &Table) -> Result<(), CoreError> {
     // Execute a system command
-    let exec_fn = lua.create_function(|_, cmd: String| {
+    let exec_fn = lua.create_function(|lua_ctx, cmd: String| {
         debug!("Lua script executing command: {}", cmd);
         let output = Command::new("cmd")
             .args(&["/C", &cmd])
@@ -21,7 +21,8 @@ pub fn register_system_functions(lua: &Lua, table: &Table) -> Result<(), CoreErr
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         
-        let result_table = lua.create_table()?;
+        // Use the lua context provided to the closure, not the outer scope
+        let result_table = lua_ctx.create_table()?;
         result_table.set("stdout", stdout)?;
         result_table.set("stderr", stderr)?;
         result_table.set("status", output.status.code().unwrap_or(-1))?;
@@ -29,10 +30,10 @@ pub fn register_system_functions(lua: &Lua, table: &Table) -> Result<(), CoreErr
         
         Ok(result_table)
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create exec function: {}", e)))?;
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create exec function: {}", e))))?;
     
     table.set("exec", exec_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set exec function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set exec function: {}", e))))?;
     
     // Get environment variable
     let getenv_fn = lua.create_function(|_, name: String| {
@@ -41,19 +42,19 @@ pub fn register_system_functions(lua: &Lua, table: &Table) -> Result<(), CoreErr
             Err(_) => Ok(None),
         }
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create getenv function: {}", e)))?;
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create getenv function: {}", e))))?;
     
     table.set("getenv", getenv_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set getenv function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set getenv function: {}", e))))?;
     
     // Check if a file exists
     let file_exists_fn = lua.create_function(|_, path: String| {
         Ok(Path::new(&path).exists())
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create file_exists function: {}", e)))?;
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create file_exists function: {}", e))))?;
     
     table.set("file_exists", file_exists_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set file_exists function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set file_exists function: {}", e))))?;
     
     // Launch an application
     let launch_app_fn = lua.create_function(|_, (app_path, args): (String, Option<String>)| {
@@ -72,10 +73,10 @@ pub fn register_system_functions(lua: &Lua, table: &Table) -> Result<(), CoreErr
             }
         }
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create launch_app function: {}", e)))?;
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create launch_app function: {}", e))))?;
     
     table.set("launch_app", launch_app_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set launch_app function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set launch_app function: {}", e))))?;
     
     // Get current timestamp
     let get_timestamp_fn = lua.create_function(|_, ()| {
@@ -85,10 +86,10 @@ pub fn register_system_functions(lua: &Lua, table: &Table) -> Result<(), CoreErr
         
         Ok(unix_time.as_secs())
     })
-    .map_err(|e| CoreError::LuaError(format!("Failed to create get_timestamp function: {}", e)))?;
-    
+    .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create get_timestamp function: {}", e))))?; // Wrap error
+
     table.set("get_timestamp", get_timestamp_fn)
-        .map_err(|e| CoreError::LuaError(format!("Failed to set get_timestamp function: {}", e)))?;
+        .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set get_timestamp function: {}", e))))?; // Wrap error
 
    // Get system information (CPU usage, RAM, etc.)
    let get_system_info_fn = lua.create_function(|_lua, info_type: String| {
@@ -105,10 +106,10 @@ pub fn register_system_functions(lua: &Lua, table: &Table) -> Result<(), CoreErr
            ))),
        }
    })
-   .map_err(|e| CoreError::LuaError(format!("Failed to create get_system_info function: {}", e)))?;
-
+   .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to create get_system_info function: {}", e))))?; // Wrap error
+   
    table.set("get_system_info", get_system_info_fn)
-       .map_err(|e| CoreError::LuaError(format!("Failed to set get_system_info function: {}", e)))?;
+       .map_err(|e| CoreError::LuaError(mlua::Error::external(format!("Failed to set get_system_info function: {}", e))))?; // Wrap error
     
     info!("System API functions registered successfully");
     Ok(())
@@ -117,7 +118,7 @@ pub fn register_system_functions(lua: &Lua, table: &Table) -> Result<(), CoreErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mlua::{Lua, Value};
+    use mlua::Lua; // Removed unused Value import
     
     #[test]
     fn test_register_system_functions() {

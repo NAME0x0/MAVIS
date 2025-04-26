@@ -5,13 +5,14 @@ pub mod memory;
 pub mod network;
 pub mod disk;
 
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
 use crate::config::Config;
 use crate::error::CoreError;
 use log::{error, info};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 /// Resource usage data collected by the monitor
 #[derive(Debug, Clone)]
@@ -67,14 +68,11 @@ pub struct ResourceMonitor {
     /// Whether monitoring is currently active
     active: bool,
     /// Monitor thread handle
-    thread_handle: Option<thread::JoinHandle<()>>,
-    /// Sender for control messages
-    control_tx: mpsc::Sender<ControlMessage>,
-}
-
-/// Control messages for the monitor thread
-enum ControlMessage {
-    Stop,
+    thread_handle: Option<JoinHandle<()>>,
+    /// Sender for stop signal
+    stop_tx: watch::Sender<bool>,
+    /// Receiver for stop signal (kept for cloning)
+    stop_rx: watch::Receiver<bool>,
 }
 
 impl ResourceMonitor {
@@ -82,14 +80,16 @@ impl ResourceMonitor {
     pub fn new(config: &Config) -> Result<Self, CoreError> {
         let update_interval = config.monitoring.update_interval_ms;
         let usage = Arc::new(Mutex::new(ResourceUsage::default()));
-        let (control_tx, mut control_rx) = mpsc::channel::<ControlMessage>(10);
+        // Create a watch channel for the stop signal (initially false)
+        let (stop_tx, stop_rx) = watch::channel(false);
         
         Ok(Self {
             usage,
             update_interval,
             active: false,
             thread_handle: None,
-            control_tx,
+            stop_tx,
+            stop_rx, // Store the receiver for cloning
         })
     }
     
@@ -111,10 +111,10 @@ impl ResourceMonitor {
             .worker_threads(1)
             .enable_all()
             .build()
-            .map_err(|e| CoreError::IoError(format!("Failed to create runtime: {}", e)))?;
+            .map_err(|e| CoreError::IoError(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create runtime: {}", e))))?; // Wrap error
             
-        // Create a control channel receiver clone for the thread
-        let mut control_rx = rt.block_on(async { control_rx.clone() });
+        // Create a stop receiver clone for the thread
+        let mut stop_rx_clone = self.stop_rx.clone();
         
         // Spawn monitoring thread
         let thread_handle = thread::spawn(move || {
@@ -221,12 +221,11 @@ impl ResourceMonitor {
                             }
                         }
                         
-                        Some(msg) = control_rx.recv() => {
-                            match msg {
-                                ControlMessage::Stop => {
-                                    info!("Resource monitoring stopped");
-                                    break;
-                                }
+                        // Check for stop signal
+                        Ok(_) = stop_rx_clone.changed() => {
+                            if *stop_rx_clone.borrow() { // Check if the signal is true (stop)
+                                info!("Stop signal received, exiting monitor loop.");
+                                break;
                             }
                         }
                     }
@@ -241,16 +240,17 @@ impl ResourceMonitor {
     }
     
     /// Stop monitoring system resources
-    pub async fn stop(&mut self) -> Result<(), CoreError> {
+    pub async fn stop(&mut self) -> Result<(), CoreError> { // Made async
         if !self.active {
             return Ok(());
         }
-        
-        // Send stop message to the monitoring thread
-        if let Err(e) = self.control_tx.send(ControlMessage::Stop).await {
-            error!("Failed to send stop message: {}", e);
+
+        // Send stop signal (true) via the watch channel
+        if let Err(e) = self.stop_tx.send(true) {
+            error!("Failed to send stop signal: {}", e);
+            // Don't necessarily return an error, try to join the thread anyway
         }
-        
+
         // Join the monitoring thread
         if let Some(handle) = self.thread_handle.take() {
             if let Err(e) = handle.join() {

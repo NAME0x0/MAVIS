@@ -1,7 +1,7 @@
 [package]
 name = "mavis-gui"
 version = "0.1.0-alpha"
-edition = "2025"
+edition = "2024" # Use the latest stable edition
 authors = ["MAVIS Contributors"]
 description = "GUI framework for the MAVIS shell environment using Dear ImGui"
 license = "MIT"
@@ -10,23 +10,30 @@ license = "MIT"
 # Core dependency
 mavis-core = { path = "../mavis-core" }
 
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+
 # Windows API integration
 windows = { version = "0.52.0", features = [
     "Win32_Foundation", 
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_Graphics_Direct2D",
     "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Gdi",
 ] }
 
 # ImGui related
-imgui = "0.11.0"
-imgui-winit-support = "0.11.0"
-imgui-dx11-renderer = "0.11.0"
+imgui = "0.8.0" # Downgraded to match renderer
+imgui-winit-support = "0.8.0" # Downgraded to match renderer
+imgui-dx11-renderer = "0.8.0" # Use latest available version
 
 # Window creation
 winit = "0.28.7"
+raw-window-handle = "0.5.0"
 
 # Error handling
 thiserror = "1.0.58"
@@ -40,6 +47,13 @@ stb_image = "0.2.5"
 
 # Font handling
 font-kit = "0.11.0"
+
+# Scintilla integration
+scintilla-sys = "5.5.7" # Use latest available version
+
+[build-dependencies]
+# Placeholder for potential build script needs (e.g., copying SciLexer.dll)
+# Example: build-deps = "0.1"
 
 [features]
 default = ["direct2d"]

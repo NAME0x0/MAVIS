@@ -7,7 +7,7 @@ pub fn register_keybinding_functions(lua: &Lua, mavis_table: &Table) -> Result<(
     let keybindings_table = super::create_nested_table(lua, mavis_table, "keybindings")?;
 
     // Placeholder for bind_key function
-    let bind_key = lua.create_function(|_lua, (key_combo, callback): (String, Function)| {
+    let bind_key = lua.create_function(|_lua, (key_combo, _callback): (String, Function)| {
         // TODO: Implement actual keybinding registration logic.
         // This will likely involve storing the key_combo and callback in a shared state
         // accessible by the GUI or main event loop.

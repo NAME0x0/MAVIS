@@ -1,11 +1,12 @@
 use crate::state::GuiState;
 use crate::widgets;
-use imgui::Ui;
-use log::debug; // Added debug
+use imgui::{MenuItem, Ui};
+use log::debug;
 use mavis_core::config::Config as CoreConfig;
+use windows::Win32::Foundation::HWND;
 
 /// Main function to draw the MAVIS user interface.
-pub fn draw_ui(ui: &Ui, state: &mut GuiState, core_config: &CoreConfig) {
+pub fn draw_ui(ui: &Ui, state: &mut GuiState, _core_config: &CoreConfig, parent_hwnd: HWND) {
     // --- Process Async Updates (e.g., ConPTY output) ---
     process_async_updates(state);
 
@@ -17,9 +18,9 @@ pub fn draw_ui(ui: &Ui, state: &mut GuiState, core_config: &CoreConfig) {
     // For now, we can draw some basic info or the demo window.
 
     // Example: Show resource usage from GuiState
-    ui.window("System Monitor")
+    imgui::Window::new("System Monitor")
         .size([300.0, 150.0], imgui::Condition::FirstUseEver)
-        .build(|| {
+        .build(ui, || {
             ui.text(format!("CPU Usage: {:.1}%", state.resource_usage.cpu_usage));
             ui.text(format!(
                 "Memory Usage: {:.1}% ({:.1} / {:.1} GB)",
@@ -66,6 +67,13 @@ pub fn draw_ui(ui: &Ui, state: &mut GuiState, core_config: &CoreConfig) {
         );
     }
 
+    // --- IDE Panel ---
+    // TODO: Add a toggle for IDE visibility (e.g., state.show_ide)
+    {
+        // Draw IDE panel with simplified call
+        state.ide_state.draw(ui, parent_hwnd);
+    }
+
     // --- Handle Exit Request ---
     if state.should_exit {
         // TODO: Find a way to signal exit to the main loop cleanly.
@@ -82,24 +90,24 @@ pub fn draw_ui(ui: &Ui, state: &mut GuiState, core_config: &CoreConfig) {
 fn draw_menu_bar(ui: &Ui, state: &mut GuiState) {
     ui.main_menu_bar(|| {
         ui.menu("File", || {
-            if ui.menu_item("Exit") {
+            if MenuItem::new("Exit")
+                .shortcut("Alt+F4")
+                .build(ui) {
                 state.should_exit = true;
             }
         });
         ui.menu("View", || {
             // Example: Toggle demo window visibility
-            if ui.menu_item_config("Show Demo Window")
-                .selected(state.show_demo_window)
-                .build() {
-                state.show_demo_window = !state.show_demo_window;
+            let mut show_demo = state.show_demo_window;
+            if ui.checkbox("Show Demo Window", &mut show_demo) {
+                state.show_demo_window = show_demo;
             }
             ui.separator();
             // Toggle Terminal window visibility
-             if ui.menu_item_config("Show Terminal")
-                 .selected(state.show_terminal)
-                 .build() {
-                 state.show_terminal = !state.show_terminal;
-             }
+            let mut show_terminal = state.show_terminal;
+            if ui.checkbox("Show Terminal", &mut show_terminal) {
+                state.show_terminal = show_terminal;
+            }
             // TODO: Add menu items to toggle other specific MAVIS widgets based on state.widget_visibility
         });
         // Add other menus (e.g., "Help")
